@@ -1,0 +1,11 @@
+site_name: SurgeOpt
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Usage: usage.md
+  - Developer Guide: develop.md
+  - FAQ: faq.md
+repo_url: https://github.com/djelacik/surgeopt
+repo_name: GitHub
