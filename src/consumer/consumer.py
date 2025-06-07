@@ -7,20 +7,24 @@ from confluent_kafka import Consumer, KafkaException
 from src.db.postgres import insert_order
 
 
-def start_consumer(topic: str = "order_created", bootstrap_servers: str = "localhost:9092"):
+def start_consumer(
+    topic: str = "order_created", bootstrap_servers: str = "localhost:9092"
+):
     """
     Listens to Kafka topic and inserts incoming order messages into PostgreSQL.
     """
     print("🔄 Starting consumer...")
 
-    consumer = Consumer({
-        'bootstrap.servers': bootstrap_servers,
-        'group.id': 'order-consumer-group',  # Fixed group ID
-        'auto.offset.reset': 'earliest',  # Read from beginning
-        'enable.auto.commit': True,
-        'session.timeout.ms': 6000,
-        'heartbeat.interval.ms': 2000
-    })
+    consumer = Consumer(
+        {
+            "bootstrap.servers": bootstrap_servers,
+            "group.id": "order-consumer-group",  # Fixed group ID
+            "auto.offset.reset": "earliest",  # Read from beginning
+            "enable.auto.commit": True,
+            "session.timeout.ms": 6000,
+            "heartbeat.interval.ms": 2000,
+        }
+    )
 
     print(f"🔗 Subscribing to topic '{topic}'")
     consumer.subscribe([topic])
@@ -38,7 +42,7 @@ def start_consumer(topic: str = "order_created", bootstrap_servers: str = "local
                 print(f"❌ Kafka error: {msg.error()}")
                 continue
 
-            order = json.loads(msg.value().decode('utf-8'))
+            order = json.loads(msg.value().decode("utf-8"))
             print(f"📦 Received: {order}")
             insert_order(order)
 
