@@ -1,0 +1,183 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: surgeopt
+          POSTGRES_PASSWORD: surgeopt
+          POSTGRES_DB: surgeopt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      zookeeper:
+        image: confluentinc/cp-zookeeper:7.4.0
+        env:
+          ZOOKEEPER_CLIENT_PORT: 2181
+          ZOOKEEPER_TICK_TIME: 2000
+        ports:
+          - 2181:2181
+
+      kafka:
+        image: confluentinc/cp-kafka:7.4.0
+        env:
+          KAFKA_BROKER_ID: 1
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "kafka-broker-api-versions --bootstrap-server localhost:9092"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-timeout
+
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for PostgreSQL..."
+        timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U surgeopt; do sleep 1; done'
+        
+        echo "Waiting for Kafka..."
+        timeout 60 bash -c 'until nc -z localhost 9092; do sleep 1; done'
+        
+        echo "Creating Kafka topic..."
+        docker run --rm --network host confluentinc/cp-kafka:7.4.0 \
+          kafka-topics --create --topic order_created \
+          --bootstrap-server localhost:9092 \
+          --partitions 1 --replication-factor 1 || true
+
+    - name: Initialize database
+      run: |
+        export PGPASSWORD=surgeopt
+        psql -h localhost -p 5432 -U surgeopt -d surgeopt -f src/db/orders.sql
+
+    - name: Run unit tests
+      run: |
+        pytest tests/ -m "unit" --tb=short -v
+      env:
+        POSTGRES_HOST: localhost
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: surgeopt
+        POSTGRES_PASSWORD: surgeopt
+        POSTGRES_DB: surgeopt
+        KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+
+    - name: Run integration tests
+      run: |
+        pytest tests/ -m "integration" --tb=short -v
+      env:
+        POSTGRES_HOST: localhost
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: surgeopt
+        POSTGRES_PASSWORD: surgeopt
+        POSTGRES_DB: surgeopt
+        KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+
+    - name: Run all tests with coverage
+      run: |
+        pytest tests/ --cov=src --cov-report=xml --cov-report=html --tb=short -v
+      env:
+        POSTGRES_HOST: localhost
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: surgeopt
+        POSTGRES_PASSWORD: surgeopt
+        POSTGRES_DB: surgeopt
+        KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black isort flake8 mypy
+
+    - name: Run Black (code formatting)
+      run: black --check --diff src/ tests/
+
+    - name: Run isort (import sorting)
+      run: isort --check-only --diff src/ tests/
+
+    - name: Run flake8 (linting)
+      run: flake8 src/ tests/
+
+    - name: Run mypy (type checking)
+      run: mypy src/ --ignore-missing-imports
+
+  docker-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Test Docker Compose build
+      run: |
+        docker-compose -f docker-compose.yml build
+        docker-compose -f docker-compose.yml config
+
+    - name: Test Docker Compose services
+      run: |
+        docker-compose -f docker-compose.yml up -d
+        sleep 30
+        docker-compose -f docker-compose.yml ps
+        docker-compose -f docker-compose.yml logs
+        docker-compose -f docker-compose.yml down

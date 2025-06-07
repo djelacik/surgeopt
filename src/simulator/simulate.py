@@ -1,10 +1,11 @@
 # src/simulator/simulate.py
 # This script simulates the generation of order events and sends them to a Kafka topic.
 
-from confluent_kafka import Producer
 import json
-import time
 import random
+import time
+
+from confluent_kafka import Producer
 
 # Configure the producer
 producer = Producer({

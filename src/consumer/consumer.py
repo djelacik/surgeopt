@@ -3,6 +3,7 @@ import uuid
 from typing import Dict
 
 from confluent_kafka import Consumer, KafkaException
+
 from src.db.postgres import insert_order
 
 
