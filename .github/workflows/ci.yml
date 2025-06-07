@@ -38,3 +38,42 @@ jobs:
       run: |
         pytest tests/test_basic.py -v --tb=short
 
+    - name: Start Docker Compose services
+      run: |
+        docker compose -f docker-compose.yml up -d
+        docker ps
+
+    - name: Wait for Kafka and Postgres to be ready
+      run: |
+        curl -s https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh -o wait-for-it.sh
+        chmod +x wait-for-it.sh
+        ./wait-for-it.sh localhost:5433 -t 60 -- echo "PostgreSQL is ready"
+        ./wait-for-it.sh localhost:9092 -t 60 -- echo "Kafka is ready"
+        sleep 10  # Give services additional time to fully initialize
+
+    - name: Initialize database schema
+      run: |
+        export PGPASSWORD=surgeopt
+        sudo apt-get install -y postgresql-client
+        psql -h localhost -p 5433 -U surgeopt -d surgeopt -f src/db/orders.sql
+
+    - name: Create Kafka topics
+      run: |
+        docker exec $(docker ps -q -f "ancestor=confluentinc/cp-kafka:7.5.0") kafka-topics --create --topic order_created --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1 || echo "Topic may already exist"
+
+    - name: Run full test suite
+      run: |
+        pytest tests/ -v --tb=short
+      env:
+        POSTGRES_HOST: localhost
+        POSTGRES_PORT: 5433
+        POSTGRES_USER: surgeopt
+        POSTGRES_PASSWORD: surgeopt
+        POSTGRES_DB: surgeopt
+        KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+
+    - name: Stop Docker Compose services
+      if: always()
+      run: |
+        docker compose -f docker-compose.yml down
+

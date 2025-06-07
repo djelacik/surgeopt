@@ -31,16 +31,18 @@ def test_environment_variables():
     # In CI, these should be set
     expected_values = {
         'host': 'localhost',
-        'port': 5432,
         'user': 'surgeopt',
         'password': 'surgeopt',
-        'database': 'surgeopt'
+        'dbname': 'surgeopt'
     }
     
     # Only check if we're in CI (environment variables are set)
     if os.getenv('POSTGRES_HOST'):
         for key, expected in expected_values.items():
             assert DB_CONFIG[key] == expected, f"Expected {key}={expected}, got {DB_CONFIG[key]}"
+        
+        # Port can be either 5432 (CI) or 5433 (local development)
+        assert DB_CONFIG['port'] in [5432, 5433], f"Expected port to be 5432 or 5433, got {DB_CONFIG['port']}"
 
 
 def test_order_generation():
