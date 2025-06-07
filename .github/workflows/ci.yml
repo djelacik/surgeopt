@@ -44,11 +44,6 @@ jobs:
           KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
         ports:
           - 9092:9092
-        options: >-
-          --health-cmd "kafka-broker-api-versions --bootstrap-server localhost:9092"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
     - name: Checkout code
@@ -72,6 +67,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pytest pytest-cov pytest-timeout
+        
+        # Install PostgreSQL client for database initialization
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
 
     - name: Wait for services to be ready
       run: |
@@ -80,16 +79,17 @@ jobs:
         
         echo "Waiting for Kafka..."
         timeout 60 bash -c 'until nc -z localhost 9092; do sleep 1; done'
+        sleep 10  # Give Kafka extra time to fully start
         
         echo "Creating Kafka topic..."
-        docker run --rm --network host confluentinc/cp-kafka:7.4.0 \
-          kafka-topics --create --topic order_created \
-          --bootstrap-server localhost:9092 \
-          --partitions 1 --replication-factor 1 || true
+        timeout 30 bash -c 'until docker run --rm --network host confluentinc/cp-kafka:7.4.0 kafka-topics --create --topic order_created --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1; do sleep 2; done' || echo "Topic creation failed, may already exist"
 
     - name: Initialize database
       run: |
         export PGPASSWORD=surgeopt
+        echo "Testing database connection..."
+        psql -h localhost -p 5432 -U surgeopt -d surgeopt -c "SELECT version();"
+        echo "Initializing database schema..."
         psql -h localhost -p 5432 -U surgeopt -d surgeopt -f src/db/orders.sql
 
     - name: Run unit tests
@@ -171,13 +171,12 @@ jobs:
 
     - name: Test Docker Compose build
       run: |
-        docker-compose -f docker-compose.yml build
-        docker-compose -f docker-compose.yml config
+        docker compose -f docker-compose.yml config
 
     - name: Test Docker Compose services
       run: |
-        docker-compose -f docker-compose.yml up -d
+        docker compose -f docker-compose.yml up -d
         sleep 30
-        docker-compose -f docker-compose.yml ps
-        docker-compose -f docker-compose.yml logs
-        docker-compose -f docker-compose.yml down
+        docker compose -f docker-compose.yml ps
+        docker compose -f docker-compose.yml logs
+        docker compose -f docker-compose.yml down
