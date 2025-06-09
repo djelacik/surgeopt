@@ -32,23 +32,19 @@ def insert_order(order: Dict[str, Any]) -> None:
         order: Dict with keys 'order_id', 'lat', 'lon', 'timestamp' (Unix time)
 
     Raises:
-        ValueError: if order_id is not in the format 'order_<int>'
+        ValueError: if order_id is not a valid UUID format
         Exception: if database insertion fails
     """
     try:
-        # Validate and parse order_id
+        # Validate order_id as UUID
         order_id_str = order["order_id"]
-        if not order_id_str.startswith("order_"):
-            raise ValueError(f"Invalid order_id format: {order_id_str}")
-
         try:
-            order_number = int(order_id_str.replace("order_", ""))
+            # This will raise ValueError if not a valid UUID
+            uuid.UUID(order_id_str)
         except ValueError:
-            raise ValueError(f"Order ID must end with an integer: {order_id_str}")
+            raise ValueError(f"Invalid UUID format: {order_id_str}")
 
-        # Generate UUID-like padded string
-        uuid_str = f"00000000-0000-0000-0000-{str(order_number).zfill(12)}"
-
+        # Insert into database
         with psycopg2.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -58,13 +54,14 @@ def insert_order(order: Dict[str, Any]) -> None:
                     ON CONFLICT (order_id) DO NOTHING;
                     """,
                     (
-                        uuid_str,  # Keep as string for PostgreSQL
+                        order_id_str,  # Keep as string for PostgreSQL
                         order["lat"],
                         order["lon"],
                         order["timestamp"],
                     ),
                 )
-                logger.info(f"✅ Inserted order {order_id_str} -> {uuid_str}")
+        # Silently insert order (only log errors)
+        pass
 
     except Exception as e:
         logger.error(
