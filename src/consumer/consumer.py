@@ -1,6 +1,7 @@
 # src/consumer/consumer.py
 
 import json
+import time
 import uuid
 from typing import Dict
 from confluent_kafka import Consumer, KafkaException, KafkaError, Producer
@@ -8,11 +9,13 @@ from src.db.postgres import insert_order
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from src.adwin.detector import DriftDetector
+from src.metrics.exporter import get_metrics
 
 # --- Global state ---
 order_buffer = defaultdict(lambda: deque(maxlen=300))  # ~5 min buffer @1Hz
 adwin = DriftDetector()
 producer = Producer({"bootstrap.servers": "localhost:9092"})
+metrics = get_metrics()  # Initialize Prometheus metrics
 
 
 def update_zone_orders(zone: str, timestamp: float) -> None:
@@ -55,6 +58,9 @@ def start_consumer(
     Tracks order frequency per zone and publishes gap_detected if ADWIN detects drift.
     """
     print("🔄 Starting consumer...")
+    
+    # Start metrics server
+    metrics.start_server()
 
     consumer = Consumer(
         {
@@ -74,16 +80,27 @@ def start_consumer(
 
     try:
         while True:
+            # Record uptime
+            metrics.update_uptime()
+            
             msg = consumer.poll(timeout=1.0)
 
             if msg is None:
+                metrics.record_kafka_message(topic, timeout=True)
                 continue
 
             if msg.error():
                 if msg.error().code() != KafkaError._PARTITION_EOF:
                     print(f"❌ Kafka error: {msg.error()}")
+                    metrics.record_kafka_message(topic, success=False)
                 continue
 
+            # Record successful Kafka message
+            metrics.record_kafka_message(topic, success=True)
+            
+            # Measure processing time
+            processing_start = time.time()
+            
             try:
                 order = json.loads(msg.value().decode("utf-8"))
                 print(f"📦 Received: {order}")
@@ -95,6 +112,9 @@ def start_consumer(
                 timestamp = order["timestamp"]
 
                 update_zone_orders(zone, timestamp)
+                
+                # Record successful order processing
+                metrics.record_order_processed(zone, success=True)
 
                 # Every 60 seconds, evaluate ADWIN per zone
                 now = datetime.now(timezone.utc)
@@ -102,12 +122,26 @@ def start_consumer(
                     for z in order_buffer:
                         opm = compute_orders_per_minute(z)
                         drift, mean = adwin.update(z, opm)
+                        
+                        # Update metrics
+                        metrics.update_orders_per_minute(z, opm)
+                        metrics.update_adwin_mean(z, mean)
+                        
                         if drift:
                             send_gap_detected(z, opm, mean)
+                            # Record drift detection
+                            metrics.record_drift_detection(z)
                     last_checked = now
+                    
+                # Record processing time
+                processing_duration = time.time() - processing_start
+                metrics.record_processing_time(processing_duration)
 
             except (json.JSONDecodeError, KeyError, ValueError) as e:
                 print(f"⚠️ Failed to process message: {e}")
+                # Record failed order processing
+                zone = "unknown"
+                metrics.record_order_processed(zone, success=False)
                 continue
 
     except KeyboardInterrupt:

@@ -1,0 +1,52 @@
+groups:
+  - name: surgeopt.rules
+    rules:
+      # High order volume alert
+      - alert: HighOrderVolume
+        expr: surgeopt_orders_per_minute > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High order volume detected in zone {{ $labels.zone }}"
+          description: "Zone {{ $labels.zone }} is processing {{ $value }} orders per minute, which is above the threshold of 50."
+
+      # Drift detection alert
+      - alert: DriftDetected
+        expr: increase(surgeopt_adwin_drift_detected_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Concept drift detected in zone {{ $labels.zone }}"
+          description: "ADWIN algorithm detected concept drift in zone {{ $labels.zone }}. This may indicate changes in demand patterns."
+
+      # High processing latency alert
+      - alert: HighProcessingLatency
+        expr: histogram_quantile(0.95, rate(surgeopt_consumer_processing_seconds_bucket[5m])) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High processing latency detected"
+          description: "95th percentile processing latency is {{ $value }}s, which is above the threshold of 0.5s."
+
+      # Consumer down alert
+      - alert: ConsumerDown
+        expr: up{job="surgeopt"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "SurgeOpt consumer is down"
+          description: "The SurgeOpt consumer has been down for more than 30 seconds."
+
+      # Low order processing rate
+      - alert: LowOrderProcessingRate
+        expr: rate(surgeopt_orders_processed_total[5m]) * 60 < 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low order processing rate"
+          description: "Order processing rate is {{ $value }} orders/minute, which is below the expected threshold."

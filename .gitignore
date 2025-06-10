@@ -49,6 +49,11 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+
+# SurgeOpt specific
+scripts/.metrics_pid
+metrics.log
+.metrics_pid
 cover/
 
 # Translations
